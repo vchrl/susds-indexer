@@ -173,6 +173,52 @@ are finalized and therefore immutable). `--from-db` reconciliation pins its
 contract reads to the stored watermark block, so stored events and chain
 state describe the same block.
 
+### Schema
+
+The four tables, as created by [`src/lib/db.ts`](src/lib/db.ts):
+
+```sql
+CREATE TABLE deposit_events (
+  block_number     BIGINT        NOT NULL,
+  log_index        INTEGER       NOT NULL,
+  transaction_hash CHAR(66)      NOT NULL,
+  sender           CHAR(42)      NOT NULL,
+  owner            CHAR(42)      NOT NULL,
+  assets           NUMERIC(78,0) NOT NULL CHECK (assets >= 0),
+  shares           NUMERIC(78,0) NOT NULL CHECK (shares >= 0),
+  PRIMARY KEY (block_number, log_index)
+);
+
+CREATE TABLE withdraw_events (
+  block_number     BIGINT        NOT NULL,
+  log_index        INTEGER       NOT NULL,
+  transaction_hash CHAR(66)      NOT NULL,
+  sender           CHAR(42)      NOT NULL,
+  receiver         CHAR(42)      NOT NULL,
+  owner            CHAR(42)      NOT NULL,
+  assets           NUMERIC(78,0) NOT NULL CHECK (assets >= 0),
+  shares           NUMERIC(78,0) NOT NULL CHECK (shares >= 0),
+  PRIMARY KEY (block_number, log_index)
+);
+
+CREATE TABLE drip_events (
+  block_number     BIGINT        NOT NULL,
+  log_index        INTEGER       NOT NULL,
+  transaction_hash CHAR(66)      NOT NULL,
+  chi              NUMERIC(78,0) NOT NULL CHECK (chi > 0),
+  diff             NUMERIC(78,0) NOT NULL CHECK (diff >= 0),  -- 0 is real: same-second drip
+  PRIMARY KEY (block_number, log_index)
+);
+
+-- single row; advances only inside the same txn that persisted the chunk
+CREATE TABLE indexing_state (
+  id                    BOOLEAN     PRIMARY KEY DEFAULT TRUE CHECK (id),
+  highest_indexed_block BIGINT      NOT NULL,
+  highest_block_hash    CHAR(66)    NOT NULL,  -- reorg tripwire
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+```
+
 ### Schema decisions
 
 - **One table per event type, not an `events` table with a `kind` column.**
@@ -215,6 +261,24 @@ event that cannot occur under normal consensus is untestable complexity.
 Manual recovery: verify the RPC against a second source; if finality was
 genuinely violated, truncate the tables and re-index — the chain is the
 source of truth, the database is a cache.
+
+## Queries
+
+[`queries/`](queries/) holds analytical SQL demonstrating the data is
+usable, not just verifiable. Each file states what it answers, why the
+calculation is correct, and ends with actual results from the full local
+index. One shared caveat, documented per file: event rows carry block
+numbers, not timestamps, so day buckets and seconds are derived from a
+measured 12.068 s/block average — bucket edges are approximate, summed
+values are exact.
+
+| File | Answers |
+|---|---|
+| [`01_tvl_daily.sql`](queries/01_tvl_daily.sql) | Daily TVL — share supply × chi at each day's last drip (not a deposit sum, which would miss the 263.4M USDS of minted yield) |
+| [`02_apy_realized.sql`](queries/02_apy_realized.sql) | Realized APY, trailing 7d/30d, from chi growth annualized (3.59% at time of writing) |
+| [`03_net_flows_daily.sql`](queries/03_net_flows_daily.sql) | Daily gross deposit/withdrawal volume vs net flow — different questions, kept separate |
+| [`04_holder_concentration.sql`](queries/04_holder_concentration.sql) | Net-minted position per address, ranked — explicitly **not** full holder data (Transfers are not indexed; the file documents the visible proof) |
+| [`05_drip_cadence.sql`](queries/05_drip_cadence.sql) | Drip gap distribution — quantifies the staleness window reconciliation check 4 must handle (median ~72 s, p99 ~33 min, max ~7.4 h) |
 
 ## Scheduled runs
 
