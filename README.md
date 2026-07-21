@@ -7,6 +7,24 @@ accrual) events, persists them to Postgres, and verifies indexed totals
 against live contract state with **zero tolerance** — the reconciliation is
 the point of the repo.
 
+```mermaid
+flowchart LR
+    RPC["Ethereum RPC"] -->|"eth_getLogs, chunked
+    (adaptive size)"| FETCH["fetchLogsInChunks
+    src/lib/fetch.ts"]
+    FETCH --> DECODE["decode + validate
+    (missing field = throw)"]
+    DECODE -->|"ChunkConsumer hook:
+    one txn per chunk"| PG[("Postgres
+    events + watermark")]
+    PG --> REC["reconcile --from-db
+    4 exact checks"]
+    RPC -->|"eth_call pinned
+    to block N"| REC
+    REC -->|"all diffs = 0"| PASS["exit 0"]
+    REC -->|"any diff ≠ 0"| FAIL["exit 1"]
+```
+
 ## Quick start
 
 ```sh
@@ -46,6 +64,35 @@ divergence exits non-zero; PASS still prints every number.
 | 2 | latest `Drip.chi` | `chi()` | stored `chi` is by construction the `nChi` of the last emitted `Drip` |
 | 3 | Σ `Deposit.assets` − Σ `Withdraw.assets` + Σ `Drip.diff` | `usds.balanceOf(sUSDS)` | every USDS wei that crosses the contract boundary is exactly an event amount: deposits pull `assets` in, withdrawals push `assets` out, `drip()` mints exactly `diff` |
 | 4 | ⌊shares₁ · rpow(`ssr`, tₙ−`rho`) · `chi` / RAY²⌋ | `totalAssets()` | `totalAssets()` does not return stored state — it *extrapolates* `chi` to the block timestamp ([`src/lib/rpow.ts`](src/lib/rpow.ts) replicates the contract's `_rpow` bit-for-bit) |
+
+Checks 1–3 compare event sums directly; only check 4 needs the rpow
+extrapolation, because only `totalAssets()` reports extrapolated state:
+
+```mermaid
+flowchart LR
+    subgraph IDX["Indexed (events only)"]
+        S["net shares:
+        Σ Deposit.shares − Σ Withdraw.shares"]
+        C["latest Drip.chi"]
+        B["net assets + accrued:
+        Σ in − Σ out + Σ Drip.diff"]
+        V["virtual chi:
+        rpow(ssr, tN − rho) · chi / RAY"]
+    end
+    subgraph CHAIN["eth_call at pinned block N"]
+        TS["totalSupply()"]
+        CHI["chi()"]
+        BAL["usds.balanceOf(sUSDS)"]
+        TA["totalAssets()"]
+    end
+    S ---|"check 1: exact"| TS
+    C ---|"check 2: exact"| CHI
+    B ---|"check 3: exact,
+    direction diagnosed"| BAL
+    S -.->|shares| V
+    C -.->|chi| V
+    V ---|"check 4: exact"| TA
+```
 
 ### Why tolerance is zero
 
@@ -177,6 +224,24 @@ falling back to the public default.
 | `FROM_BLOCK` | latest − 50,400        | index   | Start of range (decimal) |
 | `TO_BLOCK`   | latest / finalized     | index, backfill | End of range; backfill caps it at finalized |
 | `BLOCK_NUMBER` | finalized            | reconcile (RPC mode) | Pin block N |
+
+### Adaptive chunking
+
+`CHUNK_SIZE` is only the starting point. Public RPCs fail requests for two
+distinct reasons — the range is too wide, or the endpoint is transiently
+unhealthy — and the fetcher treats them differently: halving fixes the
+first, waiting fixes the second. Only when neither can help (repeated
+failure at the 500-block minimum) does it abort:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Fetch
+    Fetch --> Fetch: success — advance cursor, reset streak, grow +1000 toward initial
+    Fetch --> Backoff: RPC error, recoverable — streak +1, halve chunk (floor 500)
+    Fetch --> Abort: RPC error at 500-block floor and streak > 3
+    Backoff --> Fetch: wait 3s × streak (cap 15s), retry same window
+    Abort --> [*]: exit 1, RPC error attached as cause
+```
 
 ### Example: historical range
 
