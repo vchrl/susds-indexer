@@ -1,0 +1,100 @@
+# Daily indexing + reconciliation.
+#
+# WHAT THIS IS: a CI correctness check, not a persistent store. The Postgres
+# service container is ephemeral — every run starts from an empty database.
+# A pg_dump is carried between runs via actions/cache, which makes resume
+# work *most* of the time, but the cache is best-effort (GitHub evicts after
+# ~7 days unused or under size pressure):
+#   - cache hit  -> restore dump, backfill resumes from indexing_state
+#   - cache miss -> full re-index from deployment (~15 min; loud in the log)
+# Either way the run is correct: the four reconciliation checks are exact
+# (0 wei tolerance) over the full event history, so a stale or corrupt
+# restore cannot produce a false PASS — it fails the reorg tripwire or a
+# check, and the job goes red.
+#
+# Note the checks REQUIRE full history from deployment: sums of every
+# Deposit/Withdraw/Drip ever emitted. A "recent window only" run cannot
+# reconcile anything, which is why a cache miss re-indexes from deployment
+# instead of shrinking the range.
+
+name: index
+
+on:
+  schedule:
+    - cron: "17 3 * * *" # daily; odd minute to avoid the top-of-hour stampede
+  workflow_dispatch:
+
+jobs:
+  index-and-reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: susds
+          POSTGRES_PASSWORD: susds
+          POSTGRES_DB: susds
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U susds -d susds"
+          --health-interval 2s
+          --health-timeout 2s
+          --health-retries 15
+
+    env:
+      # Repo secret if set; public keyless default otherwise. The || must
+      # live here in the expression: an empty env var would NOT fall through
+      # to the in-code default (?? only catches undefined, not "").
+      RPC_URL: ${{ secrets.RPC_URL || 'https://rpc.mevblocker.io' }}
+      DATABASE_URL: postgres://susds:susds@localhost:5432/susds
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # Key is unique per run so each run saves a fresh dump; restore-keys
+      # falls back to the newest previous dump by prefix.
+      - name: Restore previous database dump
+        uses: actions/cache/restore@v4
+        with:
+          path: db.dump
+          key: susds-db-${{ github.run_id }}
+          restore-keys: susds-db-
+
+      # pg_restore runs inside the service container (its client tools match
+      # the server version). A missing dump is a cache miss, not an error; a
+      # corrupt dump fails the step loudly rather than starting half-restored.
+      - name: Load dump into service container
+        run: |
+          if [ -f db.dump ]; then
+            docker exec -i ${{ job.services.postgres.id }} pg_restore -U susds -d susds < db.dump
+            echo "Restored previous dump; backfill will resume from indexing_state."
+          else
+            echo "No cached dump; full re-index from deployment block."
+          fi
+
+      - name: Backfill to finalized block
+        run: npx tsx src/backfill.ts
+
+      # Non-zero exit (any check diverging, or the reorg tripwire) fails the
+      # job — divergence is an error, not a warning.
+      - name: Reconcile stored events against contract state
+        run: npx tsx src/reconcile.ts --from-db
+
+      - name: Dump database for the next run
+        run: docker exec ${{ job.services.postgres.id }} pg_dump -U susds -Fc susds > db.dump
+
+      - name: Save database dump to cache
+        uses: actions/cache/save@v4
+        with:
+          path: db.dump
+          key: susds-db-${{ github.run_id }}
