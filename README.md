@@ -43,6 +43,22 @@ archive-capable endpoint that serves ~10k-block `eth_getLogs`, historical
 rate-limits heavy use sooner. No Docker? Any Postgres ≥ 14 works: point
 `DATABASE_URL` at it.
 
+## How sUSDS accrues yield (read this first)
+
+sUSDS is an ERC-4626 vault over USDS: holder balances never change; instead
+the share→asset exchange rate — a single accumulator called `chi` — rises
+over time, so a fixed number of shares is worth ever more USDS. `chi` is
+stored in ray (27 decimals) and is **not** updated continuously: it only
+advances when `drip()` runs, which happens lazily inside every user
+deposit/withdraw (or an explicit call), each run emitting a `Drip` event
+with the new `chi` and the yield minted since the last one.
+
+The catch for an indexer: `totalAssets()` does not return stored state.
+It extrapolates `chi` from the last drip's timestamp (`rho`) to *now*, so
+it includes yield that no event has reported yet. An event-derived total
+can therefore never exactly equal `totalAssets()` — unless you replicate
+the extrapolation, which is exactly what check 4 below does.
+
 ## Reconciliation
 
 ```sh
@@ -235,13 +251,23 @@ failure at the 500-block minimum) does it abort:
 
 ```mermaid
 stateDiagram-v2
+    direction LR
     [*] --> Fetch
-    Fetch --> Fetch: success — advance cursor, reset streak, grow +1000 toward initial
-    Fetch --> Backoff: RPC error, recoverable — streak +1, halve chunk (floor 500)
-    Fetch --> Abort: RPC error at 500-block floor and streak > 3
-    Backoff --> Fetch: wait 3s × streak (cap 15s), retry same window
-    Abort --> [*]: exit 1, RPC error attached as cause
+    Fetch --> Fetch: ok — advance, grow +1000
+    Fetch --> Backoff: error — halve, floor 500
+    Fetch --> Abort: floor + streak > 3
+    Backoff --> Fetch: wait 3s × streak
+    Abort --> [*]: exit 1
 ```
+
+In full: a successful chunk advances the cursor, resets the failure streak,
+and grows the chunk size by 1,000 blocks back toward the initial size. A
+failed request increments the streak, halves the chunk size (never below
+the 500-block floor), and waits 3 s × streak (capped at 15 s) before
+retrying the same window. If a request fails while the chunk is already at
+the floor and the streak exceeds 3, shrinking is ruled out and waiting has
+been tried — the walk aborts with exit 1 and the underlying RPC error
+attached as `cause`.
 
 ### Example: historical range
 
