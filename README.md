@@ -210,6 +210,15 @@ CREATE TABLE drip_events (
   PRIMARY KEY (block_number, log_index)
 );
 
+-- one row per block containing at least one indexed event: real timestamps
+-- for queries. block_hash is stored per block but the reorg tripwire still
+-- checks only the watermark hash (available-not-used).
+CREATE TABLE blocks (
+  block_number    BIGINT      PRIMARY KEY,
+  block_timestamp TIMESTAMPTZ NOT NULL,
+  block_hash      CHAR(66)    NOT NULL
+);
+
 -- single row; advances only inside the same txn that persisted the chunk
 CREATE TABLE indexing_state (
   id                    BOOLEAN     PRIMARY KEY DEFAULT TRUE CHECK (id),
@@ -267,10 +276,10 @@ source of truth, the database is a cache.
 [`queries/`](queries/) holds analytical SQL demonstrating the data is
 usable, not just verifiable. Each file states what it answers, why the
 calculation is correct, and ends with actual results from the full local
-index. One shared caveat, documented per file: event rows carry block
-numbers, not timestamps, so day buckets and seconds are derived from a
-measured 12.068 s/block average — bucket edges are approximate, summed
-values are exact.
+index. Day buckets and elapsed seconds come from real block timestamps in
+the `blocks` table (populated during backfill; one-off historical fill via
+`npx tsx src/backfill-timestamps.ts`), so time math is exact — no
+blocks-per-second approximation.
 
 | File | Answers |
 |---|---|

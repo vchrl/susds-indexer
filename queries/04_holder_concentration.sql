@@ -14,6 +14,9 @@
 -- is mint/burn-based only. Full balances would require indexing Transfer
 -- events (not done; see NOTES for what that would take).
 --
+-- (This query has no time dimension, so it does not join the blocks
+-- table — it is current-state as of the watermark.)
+--
 -- "owner" is the correct attribution column: in _mint the owner receives
 -- the shares, in _burn the owner's shares are burned (sender/receiver are
 -- transaction mechanics, not position holders).
@@ -46,17 +49,17 @@ LIMIT 15;
 --   SELECT count(*) FROM positions;                    -- distinct nonzero positions
 --   SELECT count(*) FROM positions WHERE shares < 0;   -- transfer-gap proof
 --
--- Tested 2026-07-21 against the full local index (watermark 25,583,193).
--- 6,691 nonzero net-minted positions, of which 1,168 are NEGATIVE — the
+-- Tested 2026-07-21 against the full local index (watermark 25,584,531).
+-- 6,692 nonzero net-minted positions, of which 1,169 are NEGATIVE — the
 -- visible footprint of un-indexed transfers described above. Actual top 5:
 --  rank |                   owner                    | net_minted_susds | pct_of_supply | cumulative_pct
---     1 | 0x3300f198988e4C9C63F75dF86De36421f06af8c4 |        801875711 |         18.63 |          18.63
---     2 | 0x00836Fe54625BE242BcFA286207795405ca4fD10 |        725564514 |         16.86 |          35.48
---     3 | 0xbA1333333333a1BA1108E8412f11850A5C319bA9 |        697599880 |         16.21 |          51.69
---     4 | 0xD00e0079B8CAB524F3fa20EA879a7736E512a5Fc |        650807495 |         15.12 |          66.81
---     5 | 0x93904eeC579e5bF7a57C2DD4AfbEA0F1C3e6A1D1 |        606025807 |         14.08 |          80.89
--- Note the cumulative column passes 100% (120.7% by rank 15): positive
--- net-minted positions alone exceed totalSupply, offset by the 1,168
+--     1 | 0x3300f198988e4C9C63F75dF86De36421f06af8c4 |        801875711 |         19.94 |          19.94
+--     2 | 0x00836Fe54625BE242BcFA286207795405ca4fD10 |        725564514 |         18.05 |          37.99
+--     3 | 0xbA1333333333a1BA1108E8412f11850A5C319bA9 |        697647177 |         17.35 |          55.34
+--     4 | 0xD00e0079B8CAB524F3fa20EA879a7736E512a5Fc |        650807495 |         16.19 |          71.53
+--     5 | 0x93904eeC579e5bF7a57C2DD4AfbEA0F1C3e6A1D1 |        606025807 |         15.07 |          86.60
+-- Note the cumulative column passes 100%: positive net-minted positions
+-- alone exceed totalSupply, offset by the 1,169
 -- negative ones so the grand total still equals supply exactly. That is
 -- the transfer gap showing up in the arithmetic — a reminder to read this
 -- as "who minted", not "who holds". (All top-3 rows are smart contracts,

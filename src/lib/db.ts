@@ -67,6 +67,18 @@ CREATE TABLE IF NOT EXISTS drip_events (
   PRIMARY KEY (block_number, log_index)
 );
 
+-- One row per block that contains at least one indexed event (~4.6% of
+-- blocks in range), giving queries real timestamps instead of a
+-- blocks-per-second approximation. block_hash is stored for every such
+-- block; note the reorg tripwire still checks ONLY the watermark hash —
+-- the per-block hashes are available-not-used (a densified tripwire could
+-- verify any of them, but none of the current code paths do).
+CREATE TABLE IF NOT EXISTS blocks (
+  block_number    BIGINT      PRIMARY KEY,
+  block_timestamp TIMESTAMPTZ NOT NULL,
+  block_hash      CHAR(66)    NOT NULL
+);
+
 -- Single row (id is always TRUE). highest_indexed_block is contiguous by
 -- construction: it only advances inside the same transaction that persisted
 -- every event of the chunk ending at that block.
@@ -109,6 +121,32 @@ export interface PersistCounts {
   drips: number;
 }
 
+/** Timestamp + hash for one block, as fetched from eth_getBlockByNumber. */
+export interface BlockRow {
+  blockNumber: bigint;
+  /** Unix seconds. Converted to TIMESTAMPTZ at insert time. */
+  timestamp: bigint;
+  hash: `0x${string}`;
+}
+
+export async function insertBlocks(
+  client: pg.PoolClient,
+  rows: BlockRow[],
+): Promise<number> {
+  const res = await client.query(
+    `INSERT INTO blocks (block_number, block_timestamp, block_hash)
+     SELECT b, to_timestamp(t), h
+     FROM unnest($1::bigint[], $2::bigint[], $3::text[]) AS u(b, t, h)
+     ON CONFLICT (block_number) DO NOTHING`,
+    [
+      rows.map((r) => r.blockNumber.toString()),
+      rows.map((r) => r.timestamp.toString()),
+      rows.map((r) => r.hash),
+    ],
+  );
+  return res.rowCount ?? 0;
+}
+
 /**
  * Persists one chunk's events and advances indexing_state to chunkEnd, all
  * in a single transaction: a crash mid-walk leaves the state pointing at the
@@ -121,6 +159,7 @@ export interface PersistCounts {
 export async function persistChunk(
   pool: pg.Pool,
   events: SusdsEvent[],
+  blockRows: BlockRow[],
   chunkEnd: bigint,
   chunkEndHash: `0x${string}`,
 ): Promise<PersistCounts> {
@@ -131,6 +170,8 @@ export async function persistChunk(
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+
+    await insertBlocks(client, blockRows);
 
     const dep = await client.query(
       `INSERT INTO deposit_events (block_number, log_index, transaction_hash, sender, owner, assets, shares)
