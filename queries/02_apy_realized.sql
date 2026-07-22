@@ -1,5 +1,10 @@
 -- 02: Realized APY over trailing 7-day and 30-day windows.
 --
+-- NOTE: src/charts.ts renders a per-day time-series VARIANT of this
+-- calculation (same chi-ratio + real-seconds annualization). If you change
+-- the formula here, change it there too — the copies are cross-referenced
+-- but not shared.
+--
 -- Basis: chi growth, NOT a sum of Drip.diff. chi is the per-share
 -- accumulator, so chi_end / chi_start is exactly the growth factor every
 -- share experienced over the window, independent of deposits and

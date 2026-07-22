@@ -1,5 +1,10 @@
 -- 03: Daily deposit volume, withdrawal volume, and net flow, in USDS.
 --
+-- NOTE: src/charts.ts renders a 90-complete-day VARIANT of this
+-- aggregation. If you change the flow logic here, change it there too —
+-- the copies are cross-referenced but not shared. (The TVL chart has no
+-- copy: it executes 01_tvl_daily.sql verbatim.)
+--
 -- Gross and net answer different questions and are kept separate:
 --   * gross (deposits, withdrawals independently) measures ACTIVITY —
 --     how much money moved through the vault;

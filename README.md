@@ -25,6 +25,18 @@ flowchart LR
     REC -->|"any diff ≠ 0"| FAIL["exit 1"]
 ```
 
+## Charts
+
+Regenerated daily by the scheduled workflow, only after all four
+reconciliation checks pass — a red day keeps the last verified charts.
+Each footer states its data source, generation time, and watermark block.
+
+![sUSDS TVL, full history](charts/tvl.svg)
+
+![Daily gross flows, last 90 days](charts/net-flows.svg)
+
+![Realized APY, trailing 30 days](charts/apy-30d.svg)
+
 ## Quick start
 
 ```sh
@@ -280,6 +292,12 @@ index. Day buckets and elapsed seconds come from real block timestamps in
 the `blocks` table (populated during backfill; one-off historical fill via
 `npx tsx src/backfill-timestamps.ts`), so time math is exact — no
 blocks-per-second approximation.
+
+Drift note: the TVL chart executes `01_tvl_daily.sql` verbatim, but the
+net-flows and APY charts in [`src/charts.ts`](src/charts.ts) are
+window/time-series *variants* of `02`/`03` — two copies of that logic
+exist, cross-referenced in both places. If you change one, change the
+other.
 
 | File | Answers |
 |---|---|

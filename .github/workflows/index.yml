@@ -28,6 +28,11 @@ jobs:
   index-and-reconcile:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    # contents: write is for the chart commit-back below. Loop safety is
+    # double-covered: this workflow has no `push` trigger, and pushes made
+    # with the default GITHUB_TOKEN do not trigger workflows at all.
+    permissions:
+      contents: write
 
     services:
       postgres:
@@ -89,6 +94,28 @@ jobs:
       # job — divergence is an error, not a warning.
       - name: Reconcile stored events against contract state
         run: npx tsx src/reconcile.ts --from-db
+
+      # Charts regenerate ONLY after reconciliation passed (a failed check
+      # exits the job above this step, keeping the last verified charts).
+      - name: Regenerate charts
+        run: npx tsx src/charts.ts
+
+      # Commit only when the rendered pixels actually changed; rebase in
+      # case a human pushed during the run. A rebase conflict on generated
+      # SVGs is near-impossible — if it happens, fail loudly; the next
+      # scheduled run regenerates from data and self-heals.
+      - name: Commit updated charts
+        run: |
+          if git diff --quiet -- charts/; then
+            echo "Charts unchanged; nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add charts/
+          git commit -m "Regenerate charts from reconciled data"
+          git pull --rebase origin main
+          git push
 
       - name: Dump database for the next run
         run: docker exec ${{ job.services.postgres.id }} pg_dump -U susds -Fc susds > db.dump
