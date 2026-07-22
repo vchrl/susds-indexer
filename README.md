@@ -342,6 +342,29 @@ the floor and the streak exceeds 3, shrinking is ruled out and waiting has
 been tried — the walk aborts with exit 1 and the underlying RPC error
 attached as `cause`.
 
+### Provider constraints
+
+Findings from running the full pipeline against keyless endpoints
+(2026-07):
+
+- Keyless endpoints throttle on **sustained** load, not per-request: one
+  endpoint served 100-header batches in ~2 s each, then temp-banned the IP
+  (Cloudflare 1015) after ~150 back-to-back batches. `src/backfill-timestamps.ts`
+  paces deliberately (250-block slices, 1 s between, endpoint rotation) for
+  this reason — don't "optimize" the delays away.
+- Retry backoff must outlast the throttle window: 30 s retries all died
+  inside one endpoint's 429 window; the script waits 30/60/120/180 s.
+- Capabilities are per call type, not per endpoint: publicnode refuses
+  historical `getLogs`/`getCode` as archive requests but serves batched
+  historical block headers fine (headers aren't archive state).
+- Verified working (2026-07): `rpc.mevblocker.io` — 10k-block `getLogs`,
+  historical `eth_call`, `finalized` tag, batched headers; `eth.drpc.org` —
+  same but ≤10k `getLogs` and earlier bans on heavy use;
+  `ethereum-rpc.publicnode.com` — batched headers and recent-range calls
+  only.
+- If a run dies mid-way anyway, nothing is lost: both backfills resume
+  from what's stored (watermark / missing-blocks query).
+
 ### Example: historical range
 
 sUSDS was deployed at block **20,677,434** (2024-09-04); first deposit
