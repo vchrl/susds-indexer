@@ -37,6 +37,14 @@ Each footer states its data source, generation time, and watermark block.
 
 ![Realized APY, trailing 30 days](charts/apy-30d.svg)
 
+What the charts show, checkable against the indexed data: the realized
+savings rate peaked at 12.50% (trailing 30d, 2025-01-08) and has decayed
+in steps to 3.60% today. TVL peaked at 6.75B USDS on 2026-04-05 and stands
+at 4.44B — down ~34% from that peak. Gross daily churn routinely dwarfs
+net flow: 19 of the last 90 days moved over 1B USDS through the vault,
+while daily net flow is typically in the tens of millions — the −540M
+outflow day on 2026-07-13 being the largest recent exception.
+
 ## Quick start
 
 ```sh
