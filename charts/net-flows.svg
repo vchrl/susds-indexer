@@ -122,5 +122,5 @@
   <rect class="pos" x="850.7" y="154.2" width="6.7" height="29.8"/><rect class="neg" x="850.7" y="184.0" width="6.7" height="33.0"/>
   <rect class="pos" x="859.7" y="145.8" width="6.7" height="38.2"/><rect class="neg" x="859.7" y="184.0" width="6.7" height="38.4"/>
   <rect class="pos" x="868.7" y="149.8" width="6.7" height="34.2"/><rect class="neg" x="868.7" y="184.0" width="6.7" height="35.4"/>
-  <text class="footer" x="72" y="372">source: variant of queries/03_net_flows_daily.sql (90 complete days) · susds-indexer · generated 2026-07-22T01:34:09.280Z · watermark block 25,584,691</text>
+  <text class="footer" x="72" y="372">source: variant of queries/03_net_flows_daily.sql (90 complete days) · susds-indexer · generated 2026-07-22T06:06:18.508Z · watermark block 25,586,285</text>
 </svg>
