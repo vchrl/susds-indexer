@@ -90,6 +90,14 @@ jobs:
       - name: Backfill to finalized block
         run: npx tsx src/backfill.ts
 
+      # Self-heal timestamp coverage: a cached dump predating the blocks
+      # table (or any gap) gets filled here; a complete database makes this
+      # a no-op in seconds. Without it, the chart queries' blocks-join sees
+      # a partial series and the fail-loud thresholds (correctly) go red —
+      # which is exactly how this gap was discovered in run 29881004158.
+      - name: Fill any missing block timestamps
+        run: npx tsx src/backfill-timestamps.ts
+
       # Non-zero exit (any check diverging, or the reorg tripwire) fails the
       # job — divergence is an error, not a warning.
       - name: Reconcile stored events against contract state
